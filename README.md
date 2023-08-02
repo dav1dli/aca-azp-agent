@@ -53,11 +53,8 @@ Test pipeline `devops/pipelines/agent-test.yaml` runs on the configured agent an
 #### Azure Cloud
 The agent image is pre–installed with `az` cli. Authentication comes from Service Connection configured in Azure DevOps. Task `AzureCLI@2` provides context for running `az` commands.
 
-#### Kubernetes: kubectl and helm
-The test pipeline shows how to perform actions on a Kubernetes/AKS cluster from a pipeline. Azure pipeline provides tasks for installing kubernetes tools. Command `az aks get-credentials` configures kubeconfig, variable `KUBECONFIG` is supported by both `kubectl` and `helm`.
-
 #### Container images builds
-The image DOES NOT include any tools for building container images. Instead, use methods like kaniko build. It starts a pod, pass it the build context (sources, Dockerfile, parameter where to push the built image, image tags) and pushes an image to a container registry. Follow its lifecycle to see what's the build status.
+The image DOES NOT include any tools for building container images. Instead, use methods like kaniko build. It starts a pod, passes it the build context (sources, Dockerfile, parameter where to push the built image, image tags) and pushes an image to a container registry.
 
 #### Terraform
 Terraform can be supported similarly to k8s commands use case: Azure pipelines provides `TerraformInstaller@0` task. Terraform Azure provider respects following variables:
