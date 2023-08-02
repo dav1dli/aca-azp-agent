@@ -1,0 +1,90 @@
+trigger: none
+
+resources:
+- repo: self
+
+parameters:
+  - name: env
+    displayName: Environment to manage
+    type: string
+    default: poc
+    values:
+    - poc
+    - dev
+    - all
+  - name: cleanup
+    type: boolean
+    default: false
+
+variables:
+- group: default
+- template: config/${{ parameters.env }}.yaml
+- name: imgname
+  value: 'azdo-agent'
+- name: imgtag
+  value: '$(Build.BuildId)'
+
+stages:
+
+- stage: Build
+  displayName: Build container image
+  jobs:
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: CmdLine@2
+      displayName: Show environment
+      inputs:
+        script: |
+          env | sort
+    - task: AzureCLI@2
+      displayName: "Enable az extensions autoinstall"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+    - task: AzureCLI@2
+      displayName: "Set ACR credentials for the account"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az acr login -n $(ACR_NAME)
+          ACRUSER=$(az acr credential show --name $(ACR_NAME)  --query "username")
+          echo "##vso[task.setvariable variable=ACRUSER;]$ACRUSER"
+          ACRPASS=$(az acr credential show --name $(ACR_NAME) --query "passwords[0].value")
+          echo "##vso[task.setvariable variable=ACRPASS;]$ACRPASS"
+    - task: AzureKeyVault@2
+      displayName: "Get secrets from Azure Key Vault"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        KeyVaultName: $(KV_NAME)
+        RunAsPreJob: false
+    - task: AzureCLI@2
+      displayName: "Set PAT token"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        scriptType: pscore
+        scriptLocation: inlineScript
+        addSpnToEnvironment: true
+        inlineScript: |
+          Write-Host "##vso[task.setvariable variable=AZP_TOKEN]$(AZDO-PAT)"
+    - task: AzureCLI@2
+      displayName: "Build AZDO agent image"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az acr build --registry $(ACR_NAME) --image $(imgname):$(majorVersion).$(imgtag) .
+          [ ! -z $(az acr repository show-tags -n $(ACR_NAME) --repository $(imgname) -otsv | grep latest) ] && \
+          az acr repository untag -n $(ACR_NAME) -t $(imgname):latest
+          az acr import \
+            --name $(ACR_NAME) \
+            --source $(ACR_NAME)/$(imgname):$(majorVersion).$(imgtag) \
+            --image $(imgname):latest

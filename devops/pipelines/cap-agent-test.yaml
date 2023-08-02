@@ -1,0 +1,32 @@
+trigger: none
+resources:
+- repo: self
+pool: $(CAP_POOL)
+parameters:
+  - name: env
+    displayName: Environment to manage
+    type: string
+    default: poc
+    values:
+    - poc
+    - all
+
+variables:
+- template: config/${{ parameters.env }}.yaml
+
+steps:
+- task: AzureCLI@2
+  displayName: "Set az cli extentsions auto-install"
+  inputs:
+    azureSubscription: $(SERVICE_CONNECTION)
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      az config set extension.use_dynamic_install=yes_without_prompt
+- task: AzureCLI@2
+  displayName: "az cli test"
+  inputs:
+    azureSubscription: $(SERVICE_CONNECTION)
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: "env | sort; az group show -g $(RESOURCE_GROUP)"

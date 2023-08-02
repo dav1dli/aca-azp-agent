@@ -1,0 +1,112 @@
+trigger: none
+
+resources:
+- repo: self
+
+parameters:
+  - name: env
+    displayName: Environment to manage
+    type: string
+    default: poc
+    values:
+    - poc
+    - all
+  - name: cleanup
+    type: boolean
+    default: false
+
+variables:
+- template: config/${{ parameters.env }}.yaml
+- name: imgname
+  value: 'azdo-agent'
+
+stages:
+
+- stage: Deploy
+  displayName: Depoly to ${{ parameters.env }}
+  pool:
+    vmImage: ubuntu-latest
+  jobs:
+  - job: Deploy
+    displayName: Deploy
+    steps:
+    - task: AzureCLI@2
+      displayName: "Enable az extensions autoinstall"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+    - task: AzureCLI@2
+      displayName: "Set ACR credentials for the account"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          ACRUSER=$(az acr credential show --name ${ACR_NAME}  --query "username")
+          echo "##vso[task.setvariable variable=ACRUSER;]$ACRUSER"
+          ACRPASS=$(az acr credential show --name ${ACR_NAME} --query "passwords[0].value")
+          echo "##vso[task.setvariable variable=ACRPASS;]$ACRPASS"
+    - task: AzureKeyVault@2
+      displayName: "Get secrets from Azure Key Vault"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        KeyVaultName: $(KV_NAME)
+        RunAsPreJob: false
+    - task: AzureCLI@2
+      displayName: "Deploy AZP agent template"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -x
+          if [[ $(az containerapp job show -n $(imgname)-template -g $(RESOURCE_GROUP) -otable) ]]; then
+            echo "Template job is found. Delete."
+            az containerapp job delete -n $(imgname)-template -g $(RESOURCE_GROUP)
+          fi
+          az containerapp job create -n "$(imgname)-template"  \
+            -g $(RESOURCE_GROUP) \
+            --environment $(CAP_ENV) \
+            --trigger-type Manual \
+            --replica-timeout 300 \
+            --replica-retry-limit 1 \
+            --replica-completion-count 1 \
+            --parallelism 1 \
+            --image $(ACR_NAME)/$(imgname):latest \
+            --cpu "2.0" \
+            --memory "4Gi" \
+            --secrets "azp-token=$(AZDO-PAT)" \
+            --env-vars "AZP_TOKEN=secretref:azp-token" AZP_URL=$(AZP_URL) \
+            AZP_POOLID=$(CAP_POOLID) AZP_POOL=$(CAP_POOL) "AZP_AGENT_NAME=$(imgname)-template" \
+            --registry-server $(ACR_NAME) --registry-username $(ACRUSER) --registry-password $(ACRPASS)
+          az containerapp job start -n "$(imgname)-template" -g $(RESOURCE_GROUP)
+    - task: AzureCLI@2
+      displayName: "Deploy AZP agent"
+      inputs:
+        azureSubscription: $(SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -x
+          if [[ $(az containerapp job show -n $(imgname) -g $(RESOURCE_GROUP) -otable) ]]; then
+            echo "Agent job is found. Delete."
+            az containerapp job delete -n $(imgname) -g $(RESOURCE_GROUP)
+          fi
+          az containerapp job create -n $(imgname) \
+            -g $(RESOURCE_GROUP) \
+            --environment $(CAP_ENV) \
+            --trigger-type Event \
+            --replica-timeout 1800 --replica-retry-limit 1 \
+            --replica-completion-count 1 --parallelism 1 \
+            --image $(ACR_NAME)/$(imgname):latest \
+            --cpu "0.25" --memory "0.5Gi" \
+            --min-executions 0 --max-executions 10 --polling-interval 30 \
+            --scale-rule-name "azure-pipelines" --scale-rule-type "azure-pipelines" \
+            --scale-rule-metadata "poolID=$(CAP_POOLID)" "targetPipelinesQueueLength=1" \
+            --scale-rule-auth "personalAccessToken=azp-token" "organizationURL=organization-url" \
+            --secrets "azp-token=$(AZDO-PAT)" "organization-url=$(AZP_URL)" \
+            --env-vars AZP_URL=$(AZP_URL) AZP_POOL=$(CAP_POOL) "AZP_TOKEN=secretref:azp-token" \
+            --registry-server $(ACR_NAME)  --registry-username $(ACRUSER) --registry-password $(ACRPASS)
