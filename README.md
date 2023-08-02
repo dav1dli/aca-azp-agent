@@ -43,9 +43,6 @@ Azure DevOps personal access token: Azure DevOps project -> User settings (top r
 * agent pools read and manage: yes
 After the token is created and the dialog is finished it cannot be retirieved. It is recommended to save the token in a secure place like a key vault, from where it can be retrieved.
 ## Run
-### Azure Kubernetes Service
-See `doc/aks.md` for details how to deploy and run the agent on AKS.
-### Azure Container Apps
 See `doc/acap.md` for details how to deploy and run the agent on Azure Container Apps.
 
 ## Test
