@@ -30,17 +30,6 @@ data "azurerm_key_vault_secret" "azptoken" {
   key_vault_id = data.azurerm_key_vault.kv.id
 }
 
-resource "null_resource" "agent_template_delete" {
-  triggers = {
-    always_run = "${timestamp()}"
-  }
-  provisioner "local-exec" {
-    command = <<EOT
-      az containerapp job delete --name ${var.agent_config.name}-template \
-        --resource-group ${local.resource_group} --yes > /dev/null
-    EOT
-  }
-}
 resource "azapi_resource" "template" {
   type           = "Microsoft.App/jobs@2022-11-01-preview"
   name           = "${var.agent_config.name}-template"
@@ -122,7 +111,6 @@ resource "azapi_resource" "template" {
         tags
     ]
   }
-  depends_on = [null_resource.agent_template_delete]
 }
 resource "null_resource" "agent_template_init" {
   depends_on = [azapi_resource.template]
@@ -137,118 +125,106 @@ resource "null_resource" "agent_template_init" {
   }
 }
 
-# The configuration fails. GitHub issue https://github.com/microsoft/azure-container-apps/issues/861
-# Use null_resource calling az cli meanwhile. See job.tf .
-# resource "azapi_resource" "agent" {
-#   type                      = "Microsoft.App/jobs@2022-11-01-preview"
-#   name                      = var.agent_config.name
-#   location                  = data.azurerm_resource_group.rg.location
-#   parent_id                 = data.azurerm_resource_group.rg.id
-#   schema_validation_enabled = false
-#   tags                      = var.tags
-#   identity {
-#     type         = "UserAssigned"
-#     identity_ids = [data.azurerm_user_assigned_identity.aca_user_identity.id]
-#   }
-#   body = jsonencode({
-#     properties = {
-#       environmentId = data.azurerm_container_app_environment.aca_env.id
-#       configuration = {
-#         registries = [
-#           {
-#             server            = data.azurerm_container_registry.acr.login_server
-#             username          = data.azurerm_container_registry.acr.admin_username
-#             passwordSecretRef = "acrpassword"
-#           }
-#         ]
-#         triggerType              = "Event"
-#         replicaTimeout           = var.agent_config.timeout
-#         replicaRetryLimit        = 1
-#         eventTriggerConfig       = {
-#           replicaCompletionCount = 1
-#           parallelism            = 1
-#           scale                  = {
-#             minExecutions        = 0
-#             maxExecutions        = var.agent_config.max_replicas
-#             pollingInterval      = var.agent_config.polling_interval
-#             rules = [
-#               {
-#                 name             = "azure-pipelines"
-#                 type             = "azure-pipelines",
-#                 metadata         = {
-#                   demands                    = join(",", var.agent_config.capabilities)
-#                   poolID                     = var.agent_config.agent_pool_id
-#                   targetPipelinesQueueLength = "1"
-#                 },
-#                 auth = [
-#                   {
-#                     secretRef        = "azp-token"
-#                     triggerParameter = "personalAccessToken"
-#                   },
-#                   {
-#                     secretRef        = "organization-url"
-#                     triggerParameter = "organizationURL"
-#                   }
-#                 ]
-#               }
-#             ]
-#           }
-#         }
-#         secrets = [
-#           {
-#             name  = "acrpassword"
-#             value = data.azurerm_container_registry.acr.admin_username
-#           },
-#           {
-#             name  = "organization-url"
-#             value = "${var.agent_config.azp_url}"
-#           },
-#           {
-#             name  = "azp-token"
-#             value = data.azurerm_key_vault_secret.azptoken.value
-#           }
-#         ]
-#       }
-
-#       template = {
-#         containers = [
-#           {
-#             image         = "${var.agent_config.image}:${var.agent_config.version}"
-#             name          = var.agent_config.name
-#             env           = [
-#               {
-#                 name      = "AZP_TOKEN"
-#                 secretRef = "azp-token"
-#               },
-#               {
-#                 name      = "AZP_URL"
-#                 value     = "${var.agent_config.azp_url}"
-#               },
-#               {
-#                 name      = "AZP_POOL"
-#                 value     = "${var.agent_config.agent_pool}"
-#               },
-#               {
-#                 name      = "AZP_POOLID"
-#                 value     = "${var.agent_config.agent_pool_id}"
-#               },
-#               {
-#                 name      = "AZP_AGENT_NAME"
-#                 value     = var.agent_config.name
-#               }
-#             ]
-#             resources = {
-#               cpu         = var.agent_config.cpu
-#               memory      = var.agent_config.memory
-#             }
-#           }
-#         ]
-#       }
-#     }
-#   })
-#   lifecycle {
-#     ignore_changes = [
-#         tags
-#     ]
-#   }
-# }
+resource "azapi_resource" "agent" {
+  type                      = "Microsoft.App/jobs@2023-04-01-preview"
+  name                      = var.agent_config.name
+  location                  = data.azurerm_resource_group.rg.location
+  parent_id                 = data.azurerm_resource_group.rg.id
+  tags                      = var.tags
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [data.azurerm_user_assigned_identity.aca_user_identity.id]
+  }
+  body = jsonencode({
+    properties = {
+      environmentId = data.azurerm_container_app_environment.aca_env.id
+      configuration = {
+        registries = [
+          {
+            identity = data.azurerm_user_assigned_identity.aca_user_identity.id
+            server = data.azurerm_container_registry.acr.login_server
+          }
+        ]
+        triggerType              = "Event"
+        replicaTimeout           = var.agent_config.timeout
+        replicaRetryLimit        = 1
+        eventTriggerConfig       = {
+          replicaCompletionCount = 1
+          parallelism            = 1
+          scale                  = {
+            minExecutions        = 0
+            maxExecutions        = var.agent_config.max_replicas
+            pollingInterval      = var.agent_config.polling_interval
+            rules = [
+              {
+                name             = "azure-pipelines"
+                type             = "azure-pipelines",
+                metadata         = {
+                  demands                    = join(",", var.agent_config.capabilities)
+                  poolID                     = var.agent_config.agent_pool_id
+                  targetPipelinesQueueLength = "1"
+                },
+                auth = [
+                  {
+                    secretRef        = "azp-token"
+                    triggerParameter = "personalAccessToken"
+                  },
+                  {
+                    secretRef        = "organization-url"
+                    triggerParameter = "organizationURL"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        secrets = [
+          {
+            name  = "organization-url"
+            value = "${var.agent_config.azp_url}"
+          },
+          {
+            identity = data.azurerm_user_assigned_identity.aca_user_identity.id
+            keyVaultUrl = data.azurerm_key_vault_secret.azptoken.id
+            name = "azp-token"
+          }
+        ]
+      }
+      template = {
+        containers = [
+          {
+            image         = "${var.agent_config.image}:${var.agent_config.version}"
+            name          = var.agent_config.name
+            env           = [
+              {
+                name      = "AZP_TOKEN"
+                secretRef = "azp-token"
+              },
+              {
+                name      = "AZP_URL"
+                secretRef = "organization-url"
+              },
+              {
+                name      = "AZP_POOL"
+                value     = "${var.agent_config.agent_pool}"
+              },
+              {
+                name      = "AZP_POOLID"
+                value     = "${var.agent_config.agent_pool_id}"
+              }
+            ]
+            resources = {
+              cpu         = var.agent_config.cpu
+              memory      = var.agent_config.memory
+            }
+          }
+        ]
+      }
+    }
+  })
+  lifecycle {
+    ignore_changes = [
+        tags
+    ]
+  }
+}

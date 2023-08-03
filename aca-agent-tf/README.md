@@ -44,7 +44,6 @@ Apply:
 ```
 terraform apply -input=false -auto-approve agent.tfplan
 ```
-*Note:* currently azapi provider does not support jobs event trigger: [github issue](https://github.com/microsoft/azure-container-apps/issues/861). Until fixed null_resource calling az cli is used.
 
 ## Agent container
 Agent Dockerfile is provided. It is triggered by Azure Pipeline job queue event, starts, connects to Azure DevOps, pics a job from a queue, runs it and ends. The container is not supposed to run continuously.
