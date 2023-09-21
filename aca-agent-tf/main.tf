@@ -31,7 +31,7 @@ data "azurerm_key_vault_secret" "azptoken" {
 }
 
 resource "azapi_resource" "template" {
-  type           = "Microsoft.App/jobs@2022-11-01-preview"
+  type           = "Microsoft.App/jobs@2023-05-01"
   name           = "${var.agent_config.name}-template"
   location       = data.azurerm_resource_group.rg.location
   parent_id      = data.azurerm_resource_group.rg.id
@@ -112,27 +112,28 @@ resource "azapi_resource" "template" {
     ]
   }
 }
-resource "null_resource" "agent_template_init" {
-  depends_on = [azapi_resource.template]
-  triggers = {
-    always_run = "${timestamp()}"
-  }
-  provisioner "local-exec" {
-    command = <<EOT
-      az containerapp job start --name ${local.aca_name}-template \
-        --resource-group ${local.resource_group}
-    EOT
+
+resource "azapi_resource_action" "start" {
+  depends_on             = [azapi_resource.template]
+  type                   = "Microsoft.App/jobs@2023-05-01"
+  resource_id            = azapi_resource.template.id
+  action                 = "start"
+  response_export_values = ["*"]
+  lifecycle {
+    replace_triggered_by = [
+      azapi_resource.template
+    ]
   }
 }
 
 resource "azapi_resource" "agent" {
-  type                      = "Microsoft.App/jobs@2023-04-01-preview"
+  type                      = "Microsoft.App/jobs@2023-05-01"
   name                      = var.agent_config.name
   location                  = data.azurerm_resource_group.rg.location
   parent_id                 = data.azurerm_resource_group.rg.id
   tags                      = var.tags
   identity {
-    type         = "UserAssigned"
+    type         = "SystemAssigned, UserAssigned"
     identity_ids = [data.azurerm_user_assigned_identity.aca_user_identity.id]
   }
   body = jsonencode({
@@ -227,4 +228,18 @@ resource "azapi_resource" "agent" {
         tags
     ]
   }
+}
+data "azapi_resource" "agent" {
+  type                   = "Microsoft.App/jobs@2023-05-01"
+  name                   = var.agent_config.name
+  parent_id              = data.azurerm_resource_group.rg.id
+  depends_on             = [ azapi_resource.agent ]
+  response_export_values = ["*"]
+}
+
+resource "azurerm_key_vault_access_policy" "kv_idn_secret_read" {
+  key_vault_id    = data.azurerm_key_vault.kv.id
+  tenant_id       = data.azurerm_client_config.current.tenant_id
+  object_id       = jsondecode(data.azapi_resource.agent.output).identity.principalId
+  secret_permissions = [ "Get", ]
 }
